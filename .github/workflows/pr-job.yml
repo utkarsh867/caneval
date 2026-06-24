@@ -44,7 +44,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: INTI-CMNB/KiBot@v2_dk10
         with:
-          config: kibot/config.kibot.yml
+          config: kibot/config.kibot.yaml
       - name: upload results
         if: ${{ always() }}
         uses: actions/upload-artifact@v7
