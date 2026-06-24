@@ -24,19 +24,19 @@ on:
   pull_request:
     paths:
       # KiCad source files at the repo root.
-      - '/*.kicad_pcb'
-      - '/*.kicad_sch'
-      - '/*.kicad_pro'
-      - '/*.kicad_prl'
-      - '/*.kicad_sym'
+      - "*.kicad_pcb"
+      - "*.kicad_sch"
+      - "*.kicad_pro"
+      - "*.kicad_prl"
+      - "*.kicad_sym"
       # Footprint libraries.
-      - '/**/*.pretty'
-      - '/**/*.kicad_mod'
+      - "**/*.pretty"
+      - "**/*.kicad_mod"
       # CI configuration.
-      - '/kibot/**'
-      - '/.github/workflows/**'
-      - '/scripts/**'
-      - '/project.yml'
+      - "kibot/**"
+      - ".github/workflows/**"
+      - "scripts/**"
+      - "project.yml"
     # Don't run for closed PRs to save CI minutes; close is a no-op anyway.
     types: [opened, synchronize, reopened, ready_for_review]
 
@@ -222,3 +222,4 @@ jobs:
         run: |
           echo "::error::ERC or DRC failed. See the `kibot-pr-${{ github.event.pull_request.number }}` artifact for the full report." >&2
           exit 1
+
