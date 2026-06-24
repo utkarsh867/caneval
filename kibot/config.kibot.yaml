@@ -38,10 +38,10 @@ outputs:
   - name: "pcb_render"
     comment: "PCB PNG renders for quick PR glance"
     description: "Render front / back PNGs of the PCB."
-    type: "image"
+    type: "pdf_pcb_print"
     dir: "out/pr"
     options:
-      output: "%f-%L.png"
+      output: "%f-%L.pdf"
       # Render both copper layers and the back side as flat PNGs.
       layers: "F.Cu,B.Cu,F.Silkscreen,B.Silkscreen,F.Mask,B.Mask,Edge.Cuts"
 
