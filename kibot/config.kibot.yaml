@@ -54,6 +54,15 @@ outputs:
       output: "%f-BOM.csv"
       format: "CSV"
       units: "millimeters"
+      columns:
+        - field: Value
+          name: Comment
+        - field: References
+          name: Designator
+      csv:
+        hide_pcb_info: true
+        hide_stats_info: true
+        quote_all: true
       # Use the default KiBot column set; teams with custom fields can
       # extend `bom_columns` here.
 
@@ -96,31 +105,30 @@ outputs:
       # Plot every layer that should go on a Gerber set.
       layers: "F.Cu,B.Cu,F.Silkscreen,B.Silkscreen,F.Mask,B.Mask,Edge.Cuts"
 
-  - name: "drill_files"
-    comment: "Excellon drill zip for fabrication"
-    description: "Generate drill files in Excellon format."
-    type: "drill"
-    dir: "out/release"
-    options:
-      output: "%f-DRL.zip"
-      compress: "zip"
-      # Excellon 2 format with metric units is the most common default;
-      # override here if your fab house specifies something different.
-      drill_options: ""
-      map_options: ""
-
-  - name: "cpl"
+  - name: "position"
     comment: "Pick-and-place CSV for assembly"
     description: "Generate a single CPL CSV suitable for assembly houses."
-    type: "cpl_pos"
+    type: "position"
     dir: "out/release"
     options:
+      pre_transform: _rot_footprint_jlcpcb
       output: "%f-CPL.csv"
       format: "CSV"
       units: "millimeters"
-      # Most modern P&P machines want column order consistent with the
-      # fab house; KiBot's default is reasonable. Override here if needed.
-      column_order: "Ref,Val,Package,PosX,PosY,Side,Rot,Layer"
+      separate_files_for_front_and_back: false
+      columns:
+        - id: Ref
+          name: Designator
+        - Val
+        - Package
+        - id: PosX
+          name: "Mid X"
+        - id: PosY
+          name: "Mid Y"
+        - id: Rot
+          name: Rotation
+        - id: Side
+          name: Layer
 
   - name: "fab_doc"
     comment: "Fabrication drawing PDF"
@@ -135,12 +143,7 @@ outputs:
   - name: "kicad_step"
     comment: "3D STEP model (when available)"
     description: "Export a STEP file of the assembled board."
-    type: "kicad_step"
+    type: "step"
     dir: "out/release"
     options:
       output: "%f.step"
-
-# =============================================================================
-# End of config.kibot.yaml
-# =============================================================================
-
