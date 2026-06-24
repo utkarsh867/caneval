@@ -24,7 +24,7 @@ on:
 # Release workflow uses a different concurrency group so tags and PRs
 # do not contend.
 concurrency:
-  group: kicad-pr-review-${{ github.event.pull_request.number }}
+  group: kicad-pr-job-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 # Minimal permissions. `pull-requests: write` is needed for the sticky
