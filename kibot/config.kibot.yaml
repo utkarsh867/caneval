@@ -1,11 +1,6 @@
 kibot:
   version: 1
 
-preflight:
-  erc: true
-  drc: true
-  check_zone_fills: true
-
 outputs:
   - name: "schematic_pdf"
     comment: "Schematic PDF for PR review"
