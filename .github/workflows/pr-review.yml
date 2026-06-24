@@ -66,7 +66,7 @@ jobs:
     # Python are pinned together. Kiri is installed on top so it shares
     # the same KiCad Python bindings.
     container:
-      image: ghcr.io/intmgr/kibot:v1.6.0
+      image: ghcr.io/inti-cmnb/kicad10_auto_full:dev
       # $HOME inside the container defaults to /root which is writable.
       # No volumes mounted; everything happens in the runner workspace.
 
@@ -222,4 +222,3 @@ jobs:
         run: |
           echo "::error::ERC or DRC failed. See the `kibot-pr-${{ github.event.pull_request.number }}` artifact for the full report." >&2
           exit 1
-
