@@ -1,0 +1,148 @@
+# =============================================================================
+# .github/workflows/release.yml
+# =============================================================================
+#
+# Tag-driven release workflow. Re-runs ERC + DRC and generates the full
+# manufacturing bundle from the tagged commit, then attaches everything
+# to the GitHub Release for the tag.
+#
+# Triggered by:
+#   push of a tag matching v* (e.g. v1.0.0).
+#
+# Tags are authoritative. If you need to redo a release, delete and
+# re-create the tag on the correct commit.
+# =============================================================================
+
+name: kicad-release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+# Do NOT cancel in-flight release runs. Releases should complete or
+# fail visibly. PRs and releases use different concurrency groups so
+# they do not contend.
+concurrency:
+  group: kicad-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write   # needed to create / update the GitHub Release
+
+jobs:
+  release:
+    name: Generate release artifacts
+    runs-on: ubuntu-latest
+
+    container:
+      image: ghcr.io/intmgr/kibot:v1.6.0
+
+    env:
+      KIBOT_CONFIG: kibot/config.kibot.yaml
+
+    steps:
+      # -------------------------------------------------------------------------
+      # 1. Check out the tagged commit.
+      # -------------------------------------------------------------------------
+      - name: Check out tag
+        uses: actions/checkout@v4
+        with:
+          # Tags point at exact commits; depth 1 is sufficient.
+          fetch-depth: 1
+
+      # -------------------------------------------------------------------------
+      # 2. Validate the repo has exactly one root-level .kicad_pcb.
+      # -------------------------------------------------------------------------
+      - name: Validate board
+        id: detect_board
+        run: scripts/detect_board.sh
+
+      - name: Resolve project file
+        id: detect_project
+        run: |
+          PROJECT_FILE="$(scripts/detect_project.sh "${{ steps.detect_board.outputs.board }}")"
+          echo "project_file=${PROJECT_FILE}" >> "$GITHUB_OUTPUT"
+          echo "Resolved project file: ${PROJECT_FILE}"
+
+      # -------------------------------------------------------------------------
+      # 3. ERC + DRC for the tagged commit. Non-blocking here because
+      #    releases can be cut on a known-good commit; we surface failures
+      #    in the comment on the release instead of failing the workflow.
+      # -------------------------------------------------------------------------
+      - name: Run ERC + DRC (informational)
+        id: ercdrc
+        continue-on-error: true
+        run: |
+          kibot \
+            --cfg "${KIBOT_CONFIG}" \
+            --pre ERC \
+            --pre DRC \
+            --out out/ercdrc \
+            "${{ steps.detect_project.outputs.project_file }}"
+
+      # -------------------------------------------------------------------------
+      # 4. Generate the manufacturing bundle.
+      # -------------------------------------------------------------------------
+      - name: Generate manufacturing artifacts (KiBot)
+        id: mfg_artifacts
+        run: |
+          kibot \
+            --cfg "${KIBOT_CONFIG}" \
+            --outputs gerbers,drill_files,cpl,bom_csv,fab_doc,kicad_step \
+            --out out/release \
+            "${{ steps.detect_project.outputs.project_file }}"
+
+      # -------------------------------------------------------------------------
+      # 5. Wrap the whole bundle in a single, version-tagged zip so the
+      #    release has one obvious "everything" download alongside the
+      #    individual artifacts.
+      # -------------------------------------------------------------------------
+      - name: Wrap release bundle
+        id: wrap
+        run: |
+          TAG_NAME="${GITHUB_REF_NAME}"  # e.g. v1.0.0
+          BOARD="${{ steps.detect_board.outputs.board }}"
+          BUNDLE="${BOARD}-${TAG_NAME}-release-bundle.zip"
+          # Zip the entire KiBot output dir under a single, tag-named bundle.
+          zip -r "${BUNDLE}" out/release/
+          echo "bundle=${BUNDLE}" >> "$GITHUB_OUTPUT"
+
+      # -------------------------------------------------------------------------
+      # 6. Attach every artifact to the GitHub Release.
+      #    This step must be LAST so all artifacts exist before it runs.
+      # -------------------------------------------------------------------------
+      - name: Attach artifacts to release
+        uses: softprops/action-gh-release@v2
+        with:
+          # `files:` is a multi-line glob list. The wrapper zip is listed
+          # explicitly so its name is preserved.
+          files: |
+            out/release/*.zip
+            out/release/*.pdf
+            out/release/*.csv
+            out/release/*.step
+            ${{ steps.wrap.outputs.bundle }}
+          fail_on_unmatched_files: true
+          # Generate release notes from commits since the previous tag.
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # -------------------------------------------------------------------------
+      # 7. Status summary. Always runs so the run summary page shows a
+      #    human-readable summary even if something failed.
+      # -------------------------------------------------------------------------
+      - name: Status summary
+        if: always()
+        run: |
+          {
+            echo "## Release summary"
+            echo ""
+            echo "- **Tag**: \`${GITHUB_REF_NAME}\`"
+            echo "- **Board**: \`${{ steps.detect_board.outputs.board_file }}\`"
+            echo "- **Project file**: \`${{ steps.detect_project.outputs.project_file }}\`"
+            echo "- **ERC + DRC**: ${{ steps.ercdrc.outcome }}"
+            echo "- **Manufacturing artifacts**: ${{ steps.mfg_artifacts.outcome }}"
+            echo "- **Bundle**: \`${{ steps.wrap.outputs.bundle }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

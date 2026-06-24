@@ -1,0 +1,224 @@
+# =============================================================================
+# .github/workflows/pr-review.yml
+# =============================================================================
+#
+# Standalone PR review workflow. Runs on every pull_request that touches
+# a KiCad source file, the KiBot config, or these workflows.
+#
+# Responsibilities:
+#   - Detect the single root-level .kicad_pcb (fail loudly otherwise).
+#   - Resolve the matching schematic / project file.
+#   - Run KiBot ERC + DRC (blocking).
+#   - Run KiBot PR outputs (schematic PDF, PCB PDF, BOM, KiRi, KiCanvas).
+#   - Upload deterministic artifacts.
+#   - Post / update a single sticky PR comment summarizing pass / fail.
+#   - Exit non-zero if ERC or DRC failed.
+#
+# For orgs that want a single source of truth, see
+# `.github/workflows/reusable-pr-review.yml` for the workflow_call variant.
+# =============================================================================
+
+name: kicad-pr-review
+
+on:
+  pull_request:
+    paths:
+      # KiCad source files at the repo root.
+      - '/*.kicad_pcb'
+      - '/*.kicad_sch'
+      - '/*.kicad_pro'
+      - '/*.kicad_prl'
+      - '/*.kicad_sym'
+      # Footprint libraries.
+      - '/**/*.pretty'
+      - '/**/*.kicad_mod'
+      # CI configuration.
+      - '/kibot/**'
+      - '/.github/workflows/**'
+      - '/scripts/**'
+      - '/project.yml'
+    # Don't run for closed PRs to save CI minutes; close is a no-op anyway.
+    types: [opened, synchronize, reopened, ready_for_review]
+
+# Cancel any in-flight run for the same PR so the latest push wins.
+# Release workflow uses a different concurrency group so tags and PRs
+# do not contend.
+concurrency:
+  group: kicad-pr-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+# Minimal permissions. `pull-requests: write` is needed for the sticky
+# comment. `contents: read` is the default for `actions/checkout`.
+permissions:
+  contents: read
+  pull-requests: write
+
+# Avoid leaving jobs from closed PRs visible for 90 days.
+# Comment out if you prefer the default 400-day retention.
+# (Intentionally not setting — keep defaults.)
+
+jobs:
+  pr-review:
+    name: ERC + DRC + KiRi + review bundle
+    runs-on: ubuntu-latest
+
+    # Run inside the official KiBot Docker image so KiCad, KiBot, and
+    # Python are pinned together. Kiri is installed on top so it shares
+    # the same KiCad Python bindings.
+    container:
+      image: ghcr.io/intmgr/kibot:v1.6.0
+      # $HOME inside the container defaults to /root which is writable.
+      # No volumes mounted; everything happens in the runner workspace.
+
+    env:
+      # Tell KiBot and KiRi where to find the config files.
+      KIBOT_CONFIG: kibot/config.kibot.yaml
+
+    steps:
+      # -------------------------------------------------------------------------
+      # 1. Check out the PR.
+      # -------------------------------------------------------------------------
+      - name: Check out PR
+        uses: actions/checkout@v4
+        with:
+          # Kiri needs the full history so it can compare HEAD vs HEAD~1.
+          fetch-depth: 0
+          # Kiri needs a clean working tree on the PR base.
+          # `clean: false` is fine because KiBot writes to `out/` (gitignored).
+
+      # -------------------------------------------------------------------------
+      # 2. Detect the single root-level .kicad_pcb. Fails fast on 0 or >1.
+      # -------------------------------------------------------------------------
+      - name: Detect board
+        id: detect_board
+        run: scripts/detect_board.sh
+
+      - name: Resolve project file
+        id: detect_project
+        run: |
+          PROJECT_FILE="$(scripts/detect_project.sh "${{ steps.detect_board.outputs.board }}")"
+          echo "project_file=${PROJECT_FILE}" >> "$GITHUB_OUTPUT"
+          echo "Resolved project file: ${PROJECT_FILE}"
+
+      # -------------------------------------------------------------------------
+      # 3. Install Kiri inside the container so it shares KiCad bindings.
+      # -------------------------------------------------------------------------
+      - name: Install Kiri
+        run: pip install --quiet kicad-kiri
+
+      # -------------------------------------------------------------------------
+      # 4. ERC + DRC. Blocking. Exits non-zero on failure.
+      # -------------------------------------------------------------------------
+      - name: Run ERC + DRC (KiBot preflight)
+        id: ercdrc
+        run: |
+          kibot \
+            --cfg "${KIBOT_CONFIG}" \
+            --pre ERC \
+            --pre DRC \
+            --out out/ercdrc \
+            "${{ steps.detect_project.outputs.project_file }}"
+
+      # -------------------------------------------------------------------------
+      # 5. PR review bundle. Non-blocking — best-effort per output.
+      # -------------------------------------------------------------------------
+      - name: Generate PR review artifacts (KiBot)
+        id: pr_artifacts
+        continue-on-error: true
+        run: |
+          kibot \
+            --cfg "${KIBOT_CONFIG}" \
+            --outputs schematic_pdf,pcb_pdf,pcb_render,bom_csv,kicanvas_archive \
+            --out out/pr \
+            "${{ steps.detect_project.outputs.project_file }}"
+
+      # -------------------------------------------------------------------------
+      # 6. KiRi visual diff. Non-blocking.
+      #    KiBot's `kiri` output wraps the `kiri` CLI; we run it as a
+      #    separate KiBot invocation so we can track its outcome
+      #    independently of the other PR outputs.
+      # -------------------------------------------------------------------------
+      - name: Generate KiRi visual diff (KiBot wrapper)
+        id: kiri
+        continue-on-error: true
+        run: |
+          kibot \
+            --cfg "${KIBOT_CONFIG}" \
+            --outputs kiri_diff \
+            --out out/kiri \
+            "${{ steps.detect_project.outputs.project_file }}"
+
+      # -------------------------------------------------------------------------
+      # 7. Upload artifacts. Always runs so reviewers can grab a partial
+      #    bundle even if ERC/DRC failed.
+      # -------------------------------------------------------------------------
+      - name: Upload KiBot artifacts
+        if: always() && hashFiles('out/pr/**') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: kibot-pr-${{ github.event.pull_request.number }}
+          path: |
+            out/pr/**
+            out/ercdrc/**
+          # 30 days is enough for review; bump if your team is slow.
+          retention-days: 30
+          # Avoid the "There was an error initializing the artifact client"
+          # class of bugs by not overriding `if-no-files-found`.
+
+      - name: Upload KiRi artifacts
+        if: always() && hashFiles('out/kiri/**') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: kiri-pr-${{ github.event.pull_request.number }}
+          path: out/kiri/**
+          retention-days: 30
+
+      # -------------------------------------------------------------------------
+      # 8. Sticky PR comment. Always runs.
+      # -------------------------------------------------------------------------
+      - name: Post sticky PR comment
+        if: always()
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: kicad-pr-review
+          message: |
+            ## KiCad PR review
+
+            <!-- kicad-pr-review -->
+
+            | Check | Status |
+            | --- | --- |
+            | ERC  | ${{ steps.ercdrc.outcome == 'success' && '✅ pass' || '❌ fail (see `*-ERC.rpt`)' }} |
+            | DRC  | ${{ steps.ercdrc.outcome == 'success' && '✅ pass' || '❌ fail (see `*-DRC.rpt`)' }} |
+            | KiRi | ${{ steps.kiri.outcome == 'success' && '✅ generated' || '⚠️ skipped or failed' }} |
+
+            ### Where to look
+
+            - **Schematic PDF**, **PCB PDF**, **BOM CSV**, **KiCanvas archive**:
+              download the `kibot-pr-${{ github.event.pull_request.number }}`
+              artifact from the run summary.
+            - **Visual diff**:
+              download the `kiri-pr-${{ github.event.pull_request.number }}`
+              artifact, unzip, and open `index.html` in any browser.
+            - **Browser review**:
+              download the `*.kicanvas` archive from the `kibot-pr-*` artifact
+              and open `index.html` in any browser — no KiCad install needed.
+
+            <!--
+            Reviewer checklist:
+              - open the schematic PDF, confirm any new nets are intentional
+              - open the PCB PDF, confirm layer placement
+              - open the KiRi diff, confirm no unintended changes
+              - open the KiCanvas archive, walk through the board in 3D / 2D
+            -->
+
+      # -------------------------------------------------------------------------
+      # 9. Final gate: fail if ERC or DRC failed.
+      #    Artifact upload and sticky comment still ran above because of
+      #    `if: always()`.
+      # -------------------------------------------------------------------------
+      - name: Fail if ERC or DRC failed
+        if: steps.ercdrc.outcome != 'success'
+        run: |
+          echo "::error::ERC or DRC failed. See the `kibot-pr-${{ github.event.pull_request.number }}` artifact for the full report." >&2
+          exit 1

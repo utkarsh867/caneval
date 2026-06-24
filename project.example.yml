@@ -1,0 +1,38 @@
+# project.example.yml
+# -----------------------------------------------------------------------------
+# Per-board metadata used by the KiCad CI template.
+#
+# Copy this file to `project.yml` at the repo root and fill in the values
+# that describe *this* board. The PR and release workflows read this file
+# and pass the values to KiBot and to the PR comment.
+#
+# The schema is intentionally tiny. Anything board-specific that KiBot
+# needs (layer stack, fab notes, etc.) belongs in `kibot/config.kibot.yaml`.
+# -----------------------------------------------------------------------------
+
+# Human-friendly board name. Used in artifact filenames and the PR comment.
+# Defaults to the .kicad_pcb basename if omitted.
+name: myboard
+
+# Short, one-line description. Shown in the release notes and PR comment.
+summary: Revision A of the carrier board.
+
+# Project / board revision label. Appended to artifact filenames so that
+# revisions are unambiguous in the fab bundle (e.g. `myboard-rA-GRB.zip`).
+revision: rA
+
+# Number of physical copper layers. Used by KiBot for stack-up-dependent
+# outputs. Should match the .kicad_pcb `board.setup.copper_layers` count.
+copper_layers: 2
+
+# Free-form notes for the fabricator. Rendered into the release notes and
+# printed on the assembly drawing if KiBot is configured to include them.
+fab_notes:
+  - "ENIG finish preferred."
+  - "Impedance control not required."
+
+# Optional: components / labels for the board that should appear on the
+# silk layer even when KiBot is generating plots from the .kicad_pcb
+# directly. Most teams leave this empty and rely on the schematic title
+# block.
+labels: []

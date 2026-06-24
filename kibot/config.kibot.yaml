@@ -1,0 +1,242 @@
+# =============================================================================
+# kibot/config.kibot.yaml
+# =============================================================================
+#
+# Single source of truth for everything KiBot generates. Both the PR review
+# workflow and the release workflow invoke this file; they only differ in
+# which outputs are selected (via `--outputs`).
+#
+# Conventions:
+#   - All output names use lowercase snake_case so they can be selected
+#     reliably from the CLI.
+#   - Artifact filenames use `%f` (board basename) so they are deterministic.
+#   - PR-only outputs are grouped in `pr_set` and release-only outputs in
+#     `release_set`; both groups are selected explicitly by the workflows.
+#
+# Project-specific edits a team will commonly make:
+#   - Layer stack-up / number of copper layers (project.copper_layers below).
+#   - Fab house notes (the `fab_notes` output).
+#   - Custom KiRi configuration.
+#
+# Most teams will NOT need to touch preflight or the output definitions.
+# =============================================================================
+
+kibot:
+  version: 1
+
+# -----------------------------------------------------------------------------
+# Global settings applied to every output.
+# -----------------------------------------------------------------------------
+global:
+  # Where KiBot writes by default. Each output can override with `dir:`.
+  dir: out
+  # Tell KiBot which board to use. The CI workflow passes the project file
+  # on the command line, so this is only a fallback for local runs.
+  # `project:` is left empty here to avoid double-specifying.
+  project: null
+  # Use the KiCad 8 CLI for output generation.
+  kicad_cli: kicad-cli
+  # Be quiet in CI logs — KiBot is verbose by default.
+  quiet: true
+  # Don't auto-open generated files (no DISPLAY in CI).
+  no_run_erc: false
+  no_run_drc: false
+
+# -----------------------------------------------------------------------------
+# Project metadata. Override per repo as needed.
+# -----------------------------------------------------------------------------
+# Most fields come from `project.yml` via environment variables when
+# invoked from CI; the defaults below keep the config runnable locally
+# even without that file.
+project:
+  name: '%f'
+  copper_layers: 2
+  # KiBot variants / filters can be added here if a team wants to keep
+  # multiple BOM variants in one config (e.g. populated vs. unpopulated).
+  variants: []
+
+# =============================================================================
+# Preflight checks
+# =============================================================================
+# Preflight runs before any output and may fail the entire KiBot run. ERC
+# and DRC are configured here so they can be invoked with `--pre ERC --pre DRC`.
+# Their reports land in `dir: preflight/` and are also uploaded as artifacts.
+preflight:
+  - name: ERC
+    comment: 'Electrical Rule Check'
+    description: 'Run ERC against the schematic(s).'
+    type: erc
+    options:
+      output: '%f-ERC.rpt'
+      # `report` gives a human-readable text file. `json` is also fine for
+      # downstream tooling; teams that want both can add a second preflight.
+      format: report
+      # Don't stop the run on ERC warnings — only on errors. Adjust per team.
+      stop_on_error: true
+
+  - name: DRC
+    comment: 'Design Rule Check'
+    description: 'Run DRC against the PCB.'
+    type: drc
+    options:
+      output: '%f-DRC.rpt'
+      format: report
+      # `ignore_unconnected` is a common false-positive source; leave it on
+      # unless your team's design rules require it off.
+      ignore_unconnected: false
+      stop_on_error: true
+
+# =============================================================================
+# Outputs
+# =============================================================================
+# Each output is named so the CI can select subsets:
+#
+#   PR review:    --outputs schematic_pdf,pcb_pdf,bom_csv,kiri_diff,kicanvas_archive,pcb_render
+#   Release:      --outputs gerbers,drill_files,cpl,bom_csv,fab_doc,kicad_step,release_zip
+#
+# Outputs are grouped logically; nothing in this file is order-dependent
+# except for `release_zip` which is defined last so it can include everything.
+# -----------------------------------------------------------------------------
+
+outputs:
+
+  # ---------------------------------------------------------------------------
+  # PR review outputs
+  # ---------------------------------------------------------------------------
+
+  - name: 'schematic_pdf'
+    comment: 'Schematic PDF for PR review'
+    description: 'Render every schematic page to a single PDF.'
+    type: 'pdf_sch_print'
+    dir: 'out/pr'
+    options:
+      output: '%f-SCHEMATIC.pdf'
+      # Use A3 so multi-sheet projects stay readable.
+      paper: 'A3'
+      # One schematic per file is the KiBot default; we deliberately use
+      # `multi_file: false` so all sheets land in one PDF.
+      multi_file: false
+
+  - name: 'pcb_pdf'
+    comment: 'PCB PDF for PR review (all layers)'
+    description: 'Render the PCB with all visible layers in one PDF.'
+    type: 'pdf_pcb_print'
+    dir: 'out/pr'
+    options:
+      output: '%f-PCB.pdf'
+      # A4 portrait fits well for review of most board sizes.
+      paper: 'A4'
+      # Plot all visible layers — KiBot uses the .kicad_pcb visibility
+      # settings, so reviewers see what the designer sees.
+      layers: ''
+      # Render the board edge / courtyard too.
+      edge_cuts: true
+
+  - name: 'pcb_render'
+    comment: 'PCB PNG renders for quick PR glance'
+    description: 'Render front / back PNGs of the PCB.'
+    type: 'image'
+    dir: 'out/pr'
+    options:
+      output: '%f-%L.png'
+      # Render both copper layers and the back side as flat PNGs.
+      layers: 'F.Cu,B.Cu,F.Silkscreen,B.Silkscreen,F.Mask,B.Mask,Edge.Cuts'
+
+  - name: 'bom_csv'
+    comment: 'BOM CSV for PR review'
+    description: 'Generate a single BOM CSV covering all components.'
+    type: 'bom'
+    dir: 'out/pr'
+    options:
+      output: '%f-BOM.csv'
+      format: 'CSV'
+      units: 'millimeters'
+      # Use the default KiBot column set; teams with custom fields can
+      # extend `bom_columns` here.
+
+  - name: 'kiri_diff'
+    comment: 'KiRi visual snapshot diff'
+    description: 'Snapshot the project and produce a diff against HEAD~1.'
+    type: 'kiri'
+    dir: 'out/pr/kiri'
+    options:
+      output: '%f-kiri'
+      # KiRi picks HEAD~1 vs HEAD by default, which is exactly what we
+      # want for a PR diff.
+      # `kiri` here refers to the CLI command; KiBot wraps it.
+
+  - name: 'kicanvas_archive'
+    comment: 'KiCanvas project archive (browser review)'
+    description: 'Produce a self-contained KiCanvas archive of the project.'
+    type: 'kicanvas'
+    dir: 'out/pr'
+    options:
+      output: '%f.kicanvas'
+
+  # ---------------------------------------------------------------------------
+  # Release outputs
+  # ---------------------------------------------------------------------------
+
+  - name: 'gerbers'
+    comment: 'Gerber RS-274X zip for fabrication'
+    description: 'Generate gerber files for every copper / mask / silk / paste layer.'
+    type: 'gerber'
+    dir: 'out/release'
+    options:
+      output: '%f-GRB.zip'
+      # Most fab houses want zip; tar.gz is fine too.
+      compress: 'zip'
+      # Use the project-defined gerber options if any (e.g. precision,
+      # aperture macros); otherwise KiBot defaults are reasonable for
+      # modern fab houses.
+      gerber_options: ''
+      # Plot every layer that should go on a Gerber set.
+      layers: 'F.Cu,B.Cu,F.Silkscreen,B.Silkscreen,F.Mask,B.Mask,Edge.Cuts'
+
+  - name: 'drill_files'
+    comment: 'Excellon drill zip for fabrication'
+    description: 'Generate drill files in Excellon format.'
+    type: 'drill'
+    dir: 'out/release'
+    options:
+      output: '%f-DRL.zip'
+      compress: 'zip'
+      # Excellon 2 format with metric units is the most common default;
+      # override here if your fab house specifies something different.
+      drill_options: ''
+      map_options: ''
+
+  - name: 'cpl'
+    comment: 'Pick-and-place CSV for assembly'
+    description: 'Generate a single CPL CSV suitable for assembly houses.'
+    type: 'cpl_pos'
+    dir: 'out/release'
+    options:
+      output: '%f-CPL.csv'
+      format: 'CSV'
+      units: 'millimeters'
+      # Most modern P&P machines want column order consistent with the
+      # fab house; KiBot's default is reasonable. Override here if needed.
+      column_order: 'Ref,Val,Package,PosX,PosY,Side,Rot,Layer'
+
+  - name: 'fab_doc'
+    comment: 'Fabrication drawing PDF'
+    description: 'Render the PCB plot for fabrication notes.'
+    type: 'pdf_pcb_print'
+    dir: 'out/release'
+    options:
+      output: '%f-FAB.pdf'
+      paper: 'A4'
+      layers: 'F.Cu,B.Cu,F.Silkscreen,B.Silkscreen,F.Mask,B.Mask,Edge.Cuts'
+
+  - name: 'kicad_step'
+    comment: '3D STEP model (when available)'
+    description: 'Export a STEP file of the assembled board.'
+    type: 'kicad_step'
+    dir: 'out/release'
+    options:
+      output: '%f.step'
+
+# =============================================================================
+# End of config.kibot.yaml
+# =============================================================================

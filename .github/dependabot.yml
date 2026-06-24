@@ -1,0 +1,20 @@
+# Keep GitHub Actions versions current.
+version: 2
+updates:
+  - package-ecosystem: 'github-actions'
+    directory: '.github/workflows'
+    labels:
+      - 'dependencies'
+      - 'github-actions'
+    schedule:
+      interval: 'weekly'
+    # Group all Action version bumps into a single PR per week.
+    groups:
+      github-actions:
+        patterns:
+          - '*'
+    # Ignore major version bumps — those need a human review because
+    # some Actions have breaking changes between majors.
+    ignore:
+      - dependency-name: '*'
+        update-types: ['version-update:semver-major']

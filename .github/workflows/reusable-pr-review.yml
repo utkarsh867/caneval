@@ -1,0 +1,174 @@
+# =============================================================================
+# .github/workflows/reusable-pr-review.yml
+# =============================================================================
+#
+# Reusable variant of pr-review.yml. Same logic, but exposed via
+# `workflow_call` so org-level callers can pin one version of the CI
+# across many KiCad repos.
+#
+# Usage from a caller:
+#
+#   jobs:
+#     pr-review:
+#       uses: org/kicad-ci/.github/workflows/reusable-pr-review.yml@v1
+#       with:
+#         board_file: myboard.kicad_pcb
+#       secrets: {}   # this workflow needs no secrets
+#
+# The caller is responsible for the `on:` declaration and the path
+# filter. See `docs/adoption.md` for the org-wide rollout pattern.
+# =============================================================================
+
+name: kicad-pr-review-reusable
+
+on:
+  workflow_call:
+    # The board file, if the caller wants to override detection. If
+    # left empty, the workflow falls back to `scripts/detect_board.sh`.
+    inputs:
+      board_file:
+        description: 'Root-level .kicad_pcb filename. Empty = auto-detect.'
+        required: false
+        type: string
+        default: ''
+      # Pin the KiBot image so org-level updates land in one PR.
+      kibot_image:
+        description: 'KiBot Docker image tag.'
+        required: false
+        type: string
+        default: 'ghcr.io/intmgr/kibot:v1.6.0'
+      # Path filter is the caller's responsibility; this workflow does
+      # not enforce it.
+      kibot_config:
+        description: 'KiBot config path.'
+        required: false
+        type: string
+        default: 'kibot/config.kibot.yaml'
+
+# Same concurrency / permission pattern as pr-review.yml.
+concurrency:
+  group: kicad-pr-review-reusable-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  pr-review:
+    name: ERC + DRC + KiRi + review bundle
+    runs-on: ubuntu-latest
+
+    container:
+      image: ${{ inputs.kibot_image }}
+
+    env:
+      KIBOT_CONFIG: ${{ inputs.kibot_config }}
+
+    steps:
+      - name: Check out PR
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect or override board
+        id: detect_board
+        # If the caller passed `board_file`, trust it (no detection).
+        # Otherwise run the detection script.
+        run: |
+          if [[ -n "${{ inputs.board_file }}" ]]; then
+            BOARD_FILE="${{ inputs.board_file }}"
+            if [[ ! -f "${BOARD_FILE}" ]]; then
+              echo "::error::Caller-supplied board_file '${BOARD_FILE}' does not exist at repo root." >&2
+              exit 1
+            fi
+          else
+            scripts/detect_board.sh
+            BOARD_FILE="$(grep '^board_file=' "$GITHUB_OUTPUT" | tail -n 1 | cut -d= -f2-)"
+          fi
+          {
+            echo "board=${BOARD_FILE%.kicad_pcb}"
+            echo "board_file=${BOARD_FILE}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Resolve project file
+        id: detect_project
+        run: |
+          PROJECT_FILE="$(scripts/detect_project.sh "${{ steps.detect_board.outputs.board }}")"
+          echo "project_file=${PROJECT_FILE}" >> "$GITHUB_OUTPUT"
+          echo "Resolved project file: ${PROJECT_FILE}"
+
+      - name: Install Kiri
+        run: pip install --quiet kicad-kiri
+
+      - name: Run ERC + DRC (KiBot preflight)
+        id: ercdrc
+        run: |
+          kibot \
+            --cfg "${KIBOT_CONFIG}" \
+            --pre ERC \
+            --pre DRC \
+            --out out/ercdrc \
+            "${{ steps.detect_project.outputs.project_file }}"
+
+      - name: Generate PR review artifacts (KiBot)
+        id: pr_artifacts
+        continue-on-error: true
+        run: |
+          kibot \
+            --cfg "${KIBOT_CONFIG}" \
+            --outputs schematic_pdf,pcb_pdf,pcb_render,bom_csv,kicanvas_archive \
+            --out out/pr \
+            "${{ steps.detect_project.outputs.project_file }}"
+
+      - name: Generate KiRi visual diff (KiBot wrapper)
+        id: kiri
+        continue-on-error: true
+        run: |
+          kibot \
+            --cfg "${KIBOT_CONFIG}" \
+            --outputs kiri_diff \
+            --out out/kiri \
+            "${{ steps.detect_project.outputs.project_file }}"
+
+      - name: Upload KiBot artifacts
+        if: always() && hashFiles('out/pr/**') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: kibot-pr-${{ github.event.pull_request.number || github.run_id }}
+          path: |
+            out/pr/**
+            out/ercdrc/**
+          retention-days: 30
+
+      - name: Upload KiRi artifacts
+        if: always() && hashFiles('out/kiri/**') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: kiri-pr-${{ github.event.pull_request.number || github.run_id }}
+          path: out/kiri/**
+          retention-days: 30
+
+      - name: Post sticky PR comment
+        if: always()
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: kicad-pr-review
+          message: |
+            ## KiCad PR review (reusable)
+
+            <!-- kicad-pr-review -->
+
+            | Check | Status |
+            | --- | --- |
+            | ERC  | ${{ steps.ercdrc.outcome == 'success' && '✅ pass' || '❌ fail' }} |
+            | DRC  | ${{ steps.ercdrc.outcome == 'success' && '✅ pass' || '❌ fail' }} |
+            | KiRi | ${{ steps.kiri.outcome == 'success' && '✅ generated' || '⚠️ skipped or failed' }} |
+
+            Download artifacts from the run summary.
+
+      - name: Fail if ERC or DRC failed
+        if: steps.ercdrc.outcome != 'success'
+        run: |
+          echo "::error::ERC or DRC failed." >&2
+          exit 1
