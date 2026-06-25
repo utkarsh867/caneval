@@ -28,15 +28,6 @@ outputs:
       # Render the board edge / courtyard too.
       edge_cuts: true
 
-  - name: "pcb_render"
-    comment: "PCB PNG renders for quick PR glance"
-    type: "pdf_pcb_print"
-    dir: "out/pr"
-    options:
-      output: "%f-%L.pdf"
-      # Render both copper layers and the back side as flat PNGs.
-      layers: "F.Cu,B.Cu,F.Silkscreen,B.Silkscreen,F.Mask,B.Mask,Edge.Cuts"
-
   - name: "bom_csv"
     comment: "BOM CSV for PR review"
     type: "bom"
