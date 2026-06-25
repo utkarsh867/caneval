@@ -24,19 +24,19 @@ on:
   pull_request:
     paths:
       # KiCad source files at the repo root.
-      - '/*.kicad_pcb'
-      - '/*.kicad_sch'
-      - '/*.kicad_pro'
-      - '/*.kicad_prl'
-      - '/*.kicad_sym'
+      - "*.kicad_pcb"
+      - "*.kicad_sch"
+      - "*.kicad_pro"
+      - "*.kicad_prl"
+      - "*.kicad_sym"
       # Footprint libraries.
-      - '/**/*.pretty'
-      - '/**/*.kicad_mod'
+      - "**/*.pretty"
+      - "**/*.kicad_mod"
       # CI configuration.
-      - '/kibot/**'
-      - '/.github/workflows/**'
-      - '/scripts/**'
-      - '/project.yml'
+      - "kibot/**"
+      - ".github/workflows/**"
+      - "scripts/**"
+      - "project.yml"
     # Don't run for closed PRs to save CI minutes; close is a no-op anyway.
     types: [opened, synchronize, reopened, ready_for_review]
 
@@ -66,7 +66,7 @@ jobs:
     # Python are pinned together. Kiri is installed on top so it shares
     # the same KiCad Python bindings.
     container:
-      image: ghcr.io/intmgr/kibot:v1.6.0
+      image: ghcr.io/inti-cmnb/kicad10_auto_full:dev
       # $HOME inside the container defaults to /root which is writable.
       # No volumes mounted; everything happens in the runner workspace.
 

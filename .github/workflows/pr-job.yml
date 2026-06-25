@@ -1,0 +1,55 @@
+name: kicad-pr-job
+
+on:
+  pull_request:
+    paths:
+      # KiCad source files at the repo root.
+      - "*.kicad_pcb"
+      - "*.kicad_sch"
+      - "*.kicad_pro"
+      - "*.kicad_prl"
+      - "*.kicad_sym"
+      # Footprint libraries.
+      - "**/*.pretty"
+      - "**/*.kicad_mod"
+      # CI configuration.
+      - "kibot/**"
+      - ".github/workflows/**"
+      - "scripts/**"
+      - "project.yml"
+    # Don't run for closed PRs to save CI minutes; close is a no-op anyway.
+    types: [opened, synchronize, reopened, ready_for_review]
+
+# Cancel any in-flight run for the same PR so the latest push wins.
+# Release workflow uses a different concurrency group so tags and PRs
+# do not contend.
+concurrency:
+  group: kicad-pr-job-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+# Minimal permissions. `pull-requests: write` is needed for the sticky
+# comment. `contents: read` is the default for `actions/checkout`.
+permissions:
+  contents: read
+  pull-requests: write
+
+# Avoid leaving jobs from closed PRs visible for 90 days.
+# Comment out if you prefer the default 400-day retention.
+# (Intentionally not setting — keep defaults.)
+
+jobs:
+  pr-review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: INTI-CMNB/KiBot@v2_dk10
+        with:
+          config: kibot/config.kibot.yaml
+      - name: upload results
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: output
+          path: out
